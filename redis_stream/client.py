@@ -410,3 +410,18 @@ class FlowVelocityStream(BaseStream):
             self._entry_to_data_model(entry)) for entry in entries]
         results = asyncio.gather(*tasks, return_exceptions=True)
         return results
+
+
+# from client import FlowVelocityStream
+# from client import ConsumerGroup
+# from models import FlowVelocityModel
+# from models import TestModel
+# redis_kw = {"host": "redis"}
+# # m = FlowVelocityModel(id=12)
+# tm = TestModel(id=3)
+# f = FlowVelocityStream(tm, **redis_kw)
+# await f.initialize()
+# tm = TestModel(id=3)
+# c = ConsumerGroup(tm, 'puddel', **redis_kw)
+# await c.initialize()
+# await c.listen()
