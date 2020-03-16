@@ -193,22 +193,24 @@ class ConsumerGroup(BaseStream):
         self, 
         stream_model: StreamModel, 
         group_name: str, 
+        start_id: str = "",
         **redis_kwargs: Dict
     ):
         super().__init__(stream_model, **redis_kwargs)
         self.group_name = group_name
         self.consumers = set()
+        self.start_id = start_id if start_id else "$"
 
-    async def create(self, start_id: str = ""):
-        # start_id = start_id if start_id else "$"
-        # resp = await self._client.execute(
-        #     "XGROUP", "CREATE", sefl.model.name, self.group_name, start_id
-        # )
+    async def initialize(self):
+        await super().initialize()
+        await self._create()
+
+    async def _create(self):
         
-        start_id = start_id if start_id else "$"
         # todo should we support the mkstream option?
         await self._client.xgroup_create(
-            self.model.name, self.group_name, latest_id=start_id, mkstream=False
+            self.model.name, self.group_name, latest_id=self.start_id, 
+            mkstream=False
         )
 
     async def add_consumer(self, name: str = ""):
@@ -217,8 +219,29 @@ class ConsumerGroup(BaseStream):
         self.consumers.add(name)
         return name
 
+    async def _get_consumer(self, consumer: str = ""):
+        if not consumer:
+            logger.info("no consumer provided, will auto-generated one...")
+            consumer = await self.add_consumer()
+            logger.info("auto-generated %s consumer", consumer)
+            return consumer
+
+        if consumer not in self.consumers:
+            logger.info("consumer %s not yet known, will be added...", consumer)
+            self.add_consumer(consumer)
+        return consumer
+        
+    async def listen(self, consumer: str = "", max_items: int = 1): 
+        consumer = await self._get_consumer(consumer)
+        while True:
+            entries = await self._client.xread_group(
+                self.group_name, consumer, [self.model.name], timeout=0, count=max_items, 
+                latest_ids=[">"], no_ack=True)
+            print(f"New entries {entries} for consumer {consumer}")
+
     async def read(
-        self, consumer: str = "", 
+        self, 
+        consumer: str = "", 
         max_items: int = 1, 
         new_items_only: bool = True, 
         historical_start_id: str = ""):
@@ -231,25 +254,17 @@ class ConsumerGroup(BaseStream):
             assert not all((new_items_only, historical_start_id)), "either or not both"
         except AssertionError as err:
             raise AttributeError(err)
-        
-        if not consumer:
-            logger.info("no consumer provided, will auto-generated one...")
-            consumer = await self.add_consumer()
-            logger.info("auto-generated %s consumer", consumer)
+        consumer = await self._get_consumer(consumer)
 
-        if consumer not in self.consumers:
-            logger.info("consumer %s not yet known, will be added...", consumer)
-            self.add_consumer(consumer)
         _id = [">"] if new_items_only else [historical_start_id]
 
         # entries = await self._client.execute(
         #     "XREADGROUP", "GROUP", self.group_name, consumer, "COUNT", max_items, "STREAMS", 
         #     self.model.name, _id) 
         entries = await self._client.xread_group(
-            self.group_name, consumer, [self.model.name], timeout=0, count=max_items, 
+            self.group_name, consumer, [self.model.name], timeout=1, count=max_items, 
             latest_ids=_id, no_ack=False)
-        return entries
-        return [await self._stream_entry_to_data_model(entry) for entry in entries]
+        return [await self._stream_entry_to_data_model(entry[1:]) for entry in entries]
 
 
 # xread_group(group_name, consumer_name, streams, timeout=0, count=None, latest_ids=None, no_ack=False)
@@ -395,14 +410,3 @@ class FlowVelocityStream(BaseStream):
             self._entry_to_data_model(entry)) for entry in entries]
         results = asyncio.gather(*tasks, return_exceptions=True)
         return results
-
-
-
-
-# from client import FlowVelocityStream
-# from models import FlowVelocityModel
-# redis_kw = {"host": "redis"}
-# m = FlowVelocityModel(id=12)
-# f = FlowVelocityStream(m, **redis_kw)
-# await f.initialize()
-
